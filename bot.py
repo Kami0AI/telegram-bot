@@ -28,19 +28,16 @@ def save_memory(data):
 memory = load_memory()
 
 
-def get_history(user_id):
-    return memory.get(str(user_id), [])
+def history(uid):
+    return memory.get(str(uid), [])
 
 
-def add_to_history(user_id, role, text):
-    uid = str(user_id)
-
+def add(uid, role, text):
+    uid = str(uid)
     if uid not in memory:
         memory[uid] = []
 
     memory[uid].append({"role": role, "text": text})
-
-    # ограничим память
     memory[uid] = memory[uid][-20:]
 
     save_memory(memory)
@@ -48,28 +45,26 @@ def add_to_history(user_id, role, text):
 
 # ---------------- AI ---------------- #
 
-def ask_ai(user_id, user_text):
-    history = get_history(user_id)
-
-    messages = [
+def ask_ai(uid, text):
+    msgs = [
         {
             "role": "system",
             "content": (
-                "Ты — Ками. Живой, дерзкий, немного саркастичный, "
-                "но умный и полезный собеседник. "
-                "Отвечай как человек, не как ассистент. "
-                "Иногда подкалывай пользователя, но не будь токсичным."
+                "Ты Ками. Живой, дерзкий, немного саркастичный, "
+                "но умный. Отвечай как человек, иногда подкалывай."
             )
         }
     ]
 
-    for msg in history:
-        role = "user" if msg["role"] == "user" else "assistant"
-        messages.append({"role": role, "content": msg["text"]})
+    for m in history(uid):
+        msgs.append({
+            "role": "user" if m["role"] == "user" else "assistant",
+            "content": m["text"]
+        })
 
-    messages.append({"role": "user", "content": user_text})
+    msgs.append({"role": "user", "content": text})
 
-    response = requests.post(
+    r = requests.post(
         "https://openrouter.ai/api/v1/chat/completions",
         headers={
             "Authorization": f"Bearer {OPENROUTER_API_KEY}",
@@ -77,54 +72,47 @@ def ask_ai(user_id, user_text):
         },
         json={
             "model": "openai/gpt-4o-mini",
-            "messages": messages
+            "messages": msgs
         }
     )
 
     try:
-        return response.json()["choices"][0]["message"]["content"]
+        return r.json()["choices"][0]["message"]["content"]
     except:
-        return "Я завис, не понял вопрос 😏"
+        return "Я завис 😏"
 
 
-# ---------------- HANDLERS ---------------- #
-
-@bot.message_handler(commands=['start'])
-def start(message):
-    bot.send_message(
-        message.chat.id,
-        "Я Ками 😏\nГотов общаться. Только не задавай скучные вопросы."
-    )
-
+# ---------------- NORMAL CHAT ---------------- #
 
 @bot.message_handler(content_types=['text'])
-def handle_text(message):
-    user_id = message.from_user.id
+def normal(message):
+    uid = message.from_user.id
     text = message.text
 
-    add_to_history(user_id, "user", text)
-
-    reply = ask_ai(user_id, text)
-
-    add_to_history(user_id, "assistant", reply)
+    add(uid, "user", text)
+    reply = ask_ai(uid, text)
+    add(uid, "bot", reply)
 
     bot.send_message(message.chat.id, reply)
 
 
-# ---------------- BUSINESS SUPPORT (если Telegram даст апдейты) ---------------- #
+# ---------------- BUSINESS SUPPORT ---------------- #
 
 @bot.business_message_handler(content_types=['text'])
-def handle_business(message):
-    user_id = message.from_user.id
+def business(message):
+    uid = message.from_user.id
     text = message.text
 
-    add_to_history(user_id, "user", text)
-
-    reply = ask_ai(user_id, text)
-
-    add_to_history(user_id, "assistant", reply)
+    add(uid, "user", text)
+    reply = ask_ai(uid, text)
+    add(uid, "bot", reply)
 
     bot.send_message(message.chat.id, reply)
+
+
+@bot.business_connection_handler()
+def connected(message):
+    print("BUSINESS CONNECTED:", message)
 
 
 print("KAMI STARTED 😏")
