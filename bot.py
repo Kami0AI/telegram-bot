@@ -1,253 +1,78 @@
 import os
 import telebot
-import random
-import time
-import json
 import requests
-
-# =========================================
-# ТОКЕНЫ
-# =========================================
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
-# =========================================
-# ПАМЯТЬ
-# =========================================
+# простая память
+memory = {}
 
-MEMORY_FILE = "memory.json"
-
-def load_memory():
-    if os.path.exists(MEMORY_FILE):
-        with open(MEMORY_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    return {}
-
-def save_memory(data):
-    with open(MEMORY_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-
-memory = load_memory()
-
-# =========================================
-# НАСТРОЕНИЕ
-# =========================================
-
-moods = ["good", "lazy", "playful", "sassy"]
-bot_mood = random.choice(moods)
-
-def change_mood():
-    global bot_mood
-
-    if random.random() < 0.15:
-        bot_mood = random.choice(moods)
-
-# =========================================
-# "ЖИВОСТЬ"
-# =========================================
-
-def think():
-    time.sleep(random.uniform(1.0, 3.5))
-
-def human_unknown():
-    phrases = [
-        "хз если честно 😏",
-        "не шарю в этом",
-        "сложный вопрос конечно",
-        "я бы сейчас соврал, но не хочу",
-        "понятия не имею",
-        "интересно звучит кстати",
-        "мне лень думать 😎"
-    ]
-
-    return random.choice(phrases)
-
-# =========================================
-# OPENROUTER AI
-# =========================================
-
-def ask_ai(user_id, user_message):
-
-    url = "https://openrouter.ai/api/v1/chat/completions"
-
-    name = memory[user_id].get("name")
-
-    system_prompt = f"""
+SYSTEM_PROMPT = """
 Ты — Ками.
+Ты живой, дерзкий, слегка саркастичный, но не токсичный.
 
-Ты НЕ должен говорить как ChatGPT или ассистент.
-
-Ты:
-- живой
-- дерзкий
-- иногда ленивый
-- иногда смешной
-- общаешься как человек
-- используешь разговорную речь
-- можешь подкалывать
-- НЕ отвечаешь слишком официально
-- не пишешь огромные сообщения
-- иногда говоришь "хз", "ну", "мм"
-
-Информация о пользователе:
-Имя: {name}
-
-Настроение:
-{bot_mood}
+Правила:
+- отвечай как человек, не как ассистент
+- иногда используй эмоции и смайлы 😏
+- можешь шутить и подкалывать
+- если не знаешь — импровизируй как человек, НЕ говори "я ИИ"
+- ответы короткие или средние, без воды
 """
 
-    headers = {
-        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-        "Content-Type": "application/json"
-    }
+def ask_ai(user_id, text):
+    if user_id not in memory:
+        memory[user_id] = []
 
-    data = {
-        "model": "mistralai/mistral-7b-instruct:free",
+    memory[user_id].append({"role": "user", "content": text})
 
-        "messages": [
-            {
-                "role": "system",
-                "content": system_prompt
-            },
-            {
-                "role": "user",
-                "content": user_message
-            }
-        ]
-    }
+    # ограничим память
+    memory[user_id] = memory[user_id][-10:]
+
+    messages = [{"role": "system", "content": SYSTEM_PROMPT}] + memory[user_id]
 
     try:
-        response = requests.post(url, headers=headers, json=data, timeout=60)
+        response = requests.post(
+            "https://openrouter.ai/api/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": "openai/gpt-4o-mini",
+                "messages": messages
+            },
+            timeout=20
+        )
 
-        result = response.json()
+        data = response.json()
 
-        return result["choices"][0]["message"]["content"]
+        answer = data["choices"][0]["message"]["content"]
 
-    except:
-        return human_unknown()
+        memory[user_id].append({"role": "assistant", "content": answer})
 
-# =========================================
-# START
-# =========================================
+        return answer
+
+    except Exception as e:
+        return "хм… что-то у меня мозги подвисли 😅"
+
 
 @bot.message_handler(commands=['start'])
 def start(message):
+    bot.reply_to(message, "я Ками 😏")
 
-    user_id = str(message.chat.id)
 
-    if user_id not in memory:
-        memory[user_id] = {
-            "name": None,
-            "messages": 0
-        }
-
-    save_memory(memory)
-
-    bot.send_chat_action(message.chat.id, 'typing')
-    think()
-
-    start_phrases = [
-        "йо 😏 я Ками",
-        "ну привет 😎",
-        "живой вроде"
-    ]
-
-    bot.send_message(
-        message.chat.id,
-        random.choice(start_phrases)
-    )
-
-# =========================================
-# ЧАТ
-# =========================================
-
-@bot.message_handler(func=lambda m: True)
+@bot.message_handler(func=lambda message: True)
 def chat(message):
+    user_id = message.chat.id
+    text = message.text
 
-    global memory
+    reply = ask_ai(user_id, text)
 
-    user_id = str(message.chat.id)
-    text = message.text.lower()
+    bot.reply_to(message, reply)
 
-    if user_id not in memory:
-        memory[user_id] = {
-            "name": None,
-            "messages": 0
-        }
-
-    memory[user_id]["messages"] += 1
-
-    save_memory(memory)
-
-    change_mood()
-
-    # иногда игнорит 😏
-    if random.random() < 0.03:
-        return
-
-    # иногда пишет "..."
-    if random.random() < 0.05:
-        bot.send_message(message.chat.id, "...")
-
-    # typing
-    bot.send_chat_action(message.chat.id, 'typing')
-    think()
-
-    # память имени
-    if "меня зовут" in text:
-
-        name = text.replace("меня зовут", "").strip()
-
-        memory[user_id]["name"] = name
-
-        save_memory(memory)
-
-        bot.send_message(
-            message.chat.id,
-            f"окей, {name}. запомнил 😏"
-        )
-
-        return
-
-    # локальные реакции
-    if "как тебя зовут" in text:
-        answers = [
-            "я Ками 😏",
-            "Ками. а что?",
-            "можешь звать меня Ками"
-        ]
-
-        bot.send_message(message.chat.id, random.choice(answers))
-        return
-
-    if "кто я" in text:
-
-        name = memory[user_id]["name"]
-
-        if name:
-            bot.send_message(
-                message.chat.id,
-                f"ты {name}, я помню 😎"
-            )
-        else:
-            bot.send_message(
-                message.chat.id,
-                "пока не знаю как тебя зовут 😏"
-            )
-
-        return
-
-    # ИИ ОТВЕТ
-    ai_answer = ask_ai(user_id, text)
-
-    if len(ai_answer) > 400:
-        ai_answer = ai_answer[:400]
-
-    bot.send_message(message.chat.id, ai_answer)
 
 print("KAMI STARTED 😏")
-
 bot.infinity_polling()
