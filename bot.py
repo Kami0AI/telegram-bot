@@ -1,119 +1,45 @@
 import os
-import json
-import requests
 import telebot
+from flask import Flask, request
 
 TOKEN = os.getenv("BOT_TOKEN")
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 
 bot = telebot.TeleBot(TOKEN)
-
-MEMORY_FILE = "memory.json"
-
-
-# ---------------- MEMORY ---------------- #
-
-def load_memory():
-    if not os.path.exists(MEMORY_FILE):
-        return {}
-    with open(MEMORY_FILE, "r", encoding="utf-8") as f:
-        return json.load(f)
+app = Flask(__name__)
 
 
-def save_memory(data):
-    with open(MEMORY_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+# ===== обычные сообщения =====
+@bot.message_handler(func=lambda message: True)
+def handle_message(message):
+    text = message.text.lower()
+
+    if "привет" in text:
+        bot.send_message(message.chat.id, "Привет 😏")
+    elif "кто ты" in text:
+        bot.send_message(message.chat.id, "Я твой бот-компаньон 😎")
+    else:
+        bot.send_message(message.chat.id, f"Ты написал: {message.text}")
 
 
-memory = load_memory()
+# ===== webhook endpoint =====
+@app.route("/webhook", methods=["POST"])
+def webhook():
+    json_str = request.get_data().decode("utf-8")
+    update = telebot.types.Update.de_json(json_str)
+    bot.process_new_updates([update])
+    return "OK", 200
 
 
-def history(uid):
-    return memory.get(str(uid), [])
+# ===== старт сервера =====
+@app.route("/")
+def home():
+    return "Bot is alive 😎"
 
 
-def add(uid, role, text):
-    uid = str(uid)
-    if uid not in memory:
-        memory[uid] = []
+if __name__ == "__main__":
+    bot.remove_webhook()
 
-    memory[uid].append({"role": role, "text": text})
-    memory[uid] = memory[uid][-20:]
+    url = os.getenv("WEBHOOK_URL")  # например https://xxx.onrender.com
+    bot.set_webhook(url=f"{url}/webhook")
 
-    save_memory(memory)
-
-
-# ---------------- AI ---------------- #
-
-def ask_ai(uid, text):
-    msgs = [
-        {
-            "role": "system",
-            "content": (
-                "Ты Ками. Живой, дерзкий, немного саркастичный, "
-                "но умный. Отвечай как человек, иногда подкалывай."
-            )
-        }
-    ]
-
-    for m in history(uid):
-        msgs.append({
-            "role": "user" if m["role"] == "user" else "assistant",
-            "content": m["text"]
-        })
-
-    msgs.append({"role": "user", "content": text})
-
-    r = requests.post(
-        "https://openrouter.ai/api/v1/chat/completions",
-        headers={
-            "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-            "Content-Type": "application/json",
-        },
-        json={
-            "model": "openai/gpt-4o-mini",
-            "messages": msgs
-        }
-    )
-
-    try:
-        return r.json()["choices"][0]["message"]["content"]
-    except:
-        return "Я завис 😏"
-
-
-# ---------------- NORMAL CHAT ---------------- #
-
-@bot.message_handler(content_types=['text'])
-def normal(message):
-    uid = message.from_user.id
-    text = message.text
-
-    add(uid, "user", text)
-    reply = ask_ai(uid, text)
-    add(uid, "bot", reply)
-
-    bot.send_message(message.chat.id, reply)
-
-
-# ---------------- BUSINESS SUPPORT ---------------- #
-
-@bot.business_message_handler(content_types=['text'])
-def business(message):
-    uid = message.from_user.id
-    text = message.text
-
-    add(uid, "user", text)
-    reply = ask_ai(uid, text)
-    add(uid, "bot", reply)
-
-    bot.send_message(message.chat.id, reply)
-
-
-@bot.business_connection_handler()
-def connected(message):
-    print("BUSINESS CONNECTED:", message)
-
-
-print("KAMI STARTED 😏")
-bot.polling(none_stop=True)
+    app.run(host="0.0.0.0", port=int(os.getenv("PORT", 10000)))
